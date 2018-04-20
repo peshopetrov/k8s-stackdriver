@@ -121,8 +121,11 @@ func translateFamily(config *config.CommonConfig,
 	}
 	for _, metric := range family.GetMetric() {
 		t := translateOne(config, family.GetName(), family.GetType(), metric, startTime, cache)
-		ts = append(ts, t)
-		glog.V(4).Infof("%+v\nMetric: %+v, Interval: %+v", *t, *(t.Metric), t.Points[0].Interval)
+		if t != nil {
+			ts = append(ts, t)
+			glog.V(4).Infof("%+v\nMetric: %+v, Interval: %+v", *t, *(t.Metric), t.Points[0].Interval)
+		} else {
+		}
 	}
 	return ts, nil
 }
@@ -142,6 +145,11 @@ func translateOne(config *config.CommonConfig,
 	metric *dto.Metric,
 	start time.Time,
 	cache *MetricDescriptorCache) *v3.TimeSeries {
+	metricLabels := getMetricLabels(metric.GetLabel())
+	if _, found := metricLabels["_type"]; !found {
+		return nil
+	}
+
 	interval := &v3.TimeInterval{
 		EndTime: time.Now().UTC().Format(time.RFC3339),
 	}
@@ -160,12 +168,12 @@ func translateOne(config *config.CommonConfig,
 
 	return &v3.TimeSeries{
 		Metric: &v3.Metric{
-			Labels: getMetricLabels(metric.GetLabel()),
+			Labels: getCleanedLabels(metricLabels),
 			Type:   getMetricType(config, name),
 		},
 		Resource: &v3.MonitoredResource{
-			Labels: getResourceLabels(config),
-			Type:   "gke_container",
+			Labels: getResourceLabels(config, metricLabels),
+			Type:   metricLabels["_type"],
 		},
 		MetricKind: metricKind,
 		ValueType:  valueType,
@@ -291,7 +299,7 @@ func extractAllLabels(family *dto.MetricFamily, originalDescriptor *v3.MetricDes
 	for _, metric := range family.GetMetric() {
 		for _, label := range metric.GetLabel() {
 			_, ok := labelSet[label.GetName()]
-			if !ok {
+			if !ok && !strings.HasPrefix(label.GetName(), "_") {
 				labels = append(labels, &v3.LabelDescriptor{Key: label.GetName()})
 				labelSet[label.GetName()] = true
 			}
@@ -300,7 +308,7 @@ func extractAllLabels(family *dto.MetricFamily, originalDescriptor *v3.MetricDes
 	if originalDescriptor != nil {
 		for _, label := range originalDescriptor.Labels {
 			_, ok := labelSet[label.Key]
-			if !ok {
+			if !ok && !strings.HasPrefix(label.Key, "_") {
 				labels = append(labels, label)
 				labelSet[label.Key] = true
 			}
@@ -313,14 +321,26 @@ func createProjectName(config *config.GceConfig) string {
 	return fmt.Sprintf("projects/%s", config.Project)
 }
 
-func getResourceLabels(config *config.CommonConfig) map[string]string {
-	return map[string]string{
-		"project_id":     config.GceConfig.Project,
-		"cluster_name":   config.GceConfig.Cluster,
-		"zone":           config.GceConfig.Zone,
-		"instance_id":    config.GceConfig.Instance,
-		"namespace_id":   config.PodConfig.NamespaceId,
-		"pod_id":         config.PodConfig.PodId,
-		"container_name": "",
+func getCleanedLabels(metricLabels map[string]string) map[string]string {
+	cleanedLabels := make(map[string]string)
+	for key, value := range metricLabels {
+		if !strings.HasPrefix(key, "_") {
+			cleanedLabels[key] = value
+		}
 	}
+
+	return cleanedLabels
+}
+
+func getResourceLabels(config *config.CommonConfig, metricLabels map[string]string) map[string]string {
+	resourceLabels := make(map[string]string)
+	resourceLabels["project_id"] = config.GceConfig.Project
+
+	for key, value := range metricLabels {
+		if strings.HasPrefix(key, "_") && (key != "_type") {
+			resourceLabels[key[1:]] = value
+		}
+	}
+
+	return resourceLabels
 }

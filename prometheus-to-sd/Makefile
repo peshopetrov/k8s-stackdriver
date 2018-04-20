@@ -15,8 +15,11 @@
 all: build
 
 ENVVAR = GOOS=linux GOARCH=amd64 CGO_ENABLED=0
-PREFIX = gcr.io/google-containers
-TAG = v0.2.3
+#ENVVAR = GOOS=darwin GOARCH=amd64 CGO_ENABLED=0
+#PREFIX = gcr.io/google-containers
+PREFIX = gcr.io/leanplum-staging
+#google-containers
+TAG = v0.2.4
 
 build:
 	$(ENVVAR) godep go build -a -o monitor
